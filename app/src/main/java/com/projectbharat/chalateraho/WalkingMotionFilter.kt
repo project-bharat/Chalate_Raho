@@ -1,122 +1,125 @@
 package com.projectbharat.chalateraho
 
-import kotlin.math.sqrt
+import kotlin.math.abs
 
 /**
- * Validates hardware step-detector events against body-like acceleration
- * and a plausible human walking cadence. This is deliberately conservative:
- * a missed step is preferable to adding obvious stationary phone movement.
+ * MIT App Inventor-style accelerometer pedometer.
+ *
+ * Simple steps are peak/valley detections from the accelerometer magnitude.
+ * Walk steps are the subset whose recent cadence is regular. The algorithm
+ * uses a 100-sample rolling window, a 10-sample magnitude average and a
+ * two-interval cadence test, following MIT's published Pedometer.java design.
+ *
+ * A rhythmic cadence is a useful walking heuristic, not proof of geographic
+ * forward displacement. Walking in place can still be counted.
  */
 internal class WalkingMotionFilter(
-    private val onValidatedSteps: (Int) -> Unit
+    private val onSimpleStep: (walkStepsToAdd: Int) -> Unit
 ) {
-    private var gravityX = 0f
-    private var gravityY = 0f
-    private var gravityZ = 0f
-    private var gravityInitialized = false
-    private var latestDynamicMagnitude = 0f
-    private var latestAccelerationTimestamp = 0L
+    private val magnitudeAverage = FloatArray(AVERAGE_WINDOW)
+    private val signalWindow = FloatArray(WINDOW_SIZE)
+    private val stepIntervals = LongArray(INTERVAL_COUNT)
 
-    private var lastCandidateTimestamp = 0L
-    private var consecutiveCandidates = 0
-    private var previousIntervalMs = 0L
-    private var walkingConfirmed = false
+    private var averagePosition = 0
+    private var windowPosition = 0
+    private var intervalPosition = 0
+    private var samplesSeen = 0
+    private var peakingStarted = false
+    private var foundValley = true
+    private var lastValley = 0f
+    private var foundNonWalkingStep = true
+    private var lastStepTimestampMs = 0L
 
-    fun onAcceleration(x: Float, y: Float, z: Float, timestampNs: Long, isLinear: Boolean) {
-        val dynamicMagnitude: Float
-        if (isLinear) {
-            dynamicMagnitude = sqrt(x * x + y * y + z * z)
-        } else {
-            // Estimate gravity with a low-pass filter and remove it from raw acceleration.
-            if (!gravityInitialized) {
-                gravityX = x
-                gravityY = y
-                gravityZ = z
-                gravityInitialized = true
+    fun onAcceleration(x: Float, y: Float, z: Float, timestampNs: Long) {
+        // MIT Pedometer uses squared acceleration magnitude, retaining signal energy.
+        val magnitude = x * x + y * y + z * z
+        magnitudeAverage[averagePosition] = magnitude
+        averagePosition = (averagePosition + 1) % AVERAGE_WINDOW
+
+        var average = 0f
+        for (value in magnitudeAverage) average += value
+        average /= AVERAGE_WINDOW
+
+        signalWindow[windowPosition] = average
+        if (peakingStarted || windowPosition > 1) {
+            val previous1 = (windowPosition - 1 + WINDOW_SIZE) % WINDOW_SIZE
+            val previous2 = (windowPosition - 2 + WINDOW_SIZE) % WINDOW_SIZE
+            signalWindow[windowPosition] =
+                (signalWindow[windowPosition] + 2f * signalWindow[previous1] +
+                    signalWindow[previous2]) / 4f
+        } else if (windowPosition == 1) {
+            signalWindow[1] = (signalWindow[1] + signalWindow[0]) / 2f
+        }
+
+        val midpoint = (windowPosition + WINDOW_SIZE / 2) % WINDOW_SIZE
+        if (peakingStarted && isPeak(midpoint)) {
+            if (foundValley && signalWindow[midpoint] - lastValley > PEAK_VALLEY_RANGE) {
+                handleDetectedStep(timestampNs / 1_000_000L)
+                foundValley = false
             }
-            val alpha = 0.88f
-            gravityX = alpha * gravityX + (1f - alpha) * x
-            gravityY = alpha * gravityY + (1f - alpha) * y
-            gravityZ = alpha * gravityZ + (1f - alpha) * z
-            val dx = x - gravityX
-            val dy = y - gravityY
-            val dz = z - gravityZ
-            dynamicMagnitude = sqrt(dx * dx + dy * dy + dz * dz)
         }
 
-        // Keep a short peak envelope around the detector event timestamp.
-        if (timestampNs - latestAccelerationTimestamp > 250_000_000L) {
-            latestDynamicMagnitude = dynamicMagnitude
-        } else {
-            latestDynamicMagnitude = maxOf(latestDynamicMagnitude, dynamicMagnitude)
+        if (peakingStarted && isValley(midpoint)) {
+            foundValley = true
+            lastValley = signalWindow[midpoint]
         }
-        latestAccelerationTimestamp = timestampNs
+
+        samplesSeen++
+        if (samplesSeen >= WINDOW_SIZE && !peakingStarted) {
+            peakingStarted = true
+        }
+        windowPosition = (windowPosition + 1) % WINDOW_SIZE
     }
 
-    fun onStepDetector(timestampNs: Long) {
-        val accelerationIsStepLike =
-            timestampNs - latestAccelerationTimestamp in 0L..350_000_000L &&
-            latestDynamicMagnitude >= MIN_DYNAMIC_ACCELERATION
+    private fun handleDetectedStep(timestampMs: Long) {
+        var walkStepsToAdd = 0
+        if (lastStepTimestampMs > 0L) {
+            val interval = timestampMs - lastStepTimestampMs
+            stepIntervals[intervalPosition] = interval
+            intervalPosition = (intervalPosition + 1) % INTERVAL_COUNT
 
-        if (!accelerationIsStepLike) {
-            resetCadence()
-            return
+            if (hasRegularCadence()) {
+                // MIT backfills the two intervals that establish the walking pattern.
+                if (foundNonWalkingStep) {
+                    walkStepsToAdd += INTERVAL_COUNT
+                    foundNonWalkingStep = false
+                }
+                walkStepsToAdd += 1
+            } else {
+                foundNonWalkingStep = true
+            }
         }
+        lastStepTimestampMs = timestampMs
 
-        if (lastCandidateTimestamp == 0L) {
-            lastCandidateTimestamp = timestampNs
-            consecutiveCandidates = 1
-            return
-        }
-
-        val intervalMs = (timestampNs - lastCandidateTimestamp) / 1_000_000L
-        if (intervalMs !in MIN_STEP_INTERVAL_MS..MAX_STEP_INTERVAL_MS ||
-            (previousIntervalMs > 0L &&
-                (intervalMs.toDouble() / previousIntervalMs.toDouble() !in MIN_CADENCE_RATIO..MAX_CADENCE_RATIO))
-        ) {
-            // A new possible walking sequence begins with this event.
-            lastCandidateTimestamp = timestampNs
-            consecutiveCandidates = 1
-            previousIntervalMs = 0L
-            walkingConfirmed = false
-            return
-        }
-
-        lastCandidateTimestamp = timestampNs
-        previousIntervalMs = intervalMs
-        consecutiveCandidates++
-
-        if (!walkingConfirmed && consecutiveCandidates >= REQUIRED_RHYTHMIC_STEPS) {
-            walkingConfirmed = true
-            // Confirm the three-step sequence together, not just the final step.
-            onValidatedSteps(consecutiveCandidates)
-        } else if (walkingConfirmed) {
-            onValidatedSteps(1)
-        }
+        // Every peak/valley is a simple step; walk count is independently filtered.
+        onSimpleStep(walkStepsToAdd)
     }
 
-    fun resetIfStale(nowNs: Long) {
-        if (lastCandidateTimestamp != 0L &&
-            nowNs - lastCandidateTimestamp > WALKING_TIMEOUT_NS
-        ) {
-            resetCadence()
+    private fun hasRegularCadence(): Boolean {
+        if (stepIntervals.any { it <= 0L }) return false
+        val average = stepIntervals.average()
+        return stepIntervals.all { abs(it - average) <= INTERVAL_VARIATION_MS }
+    }
+
+    private fun isPeak(midpoint: Int): Boolean {
+        for (i in signalWindow.indices) {
+            if (i != midpoint && signalWindow[i] > signalWindow[midpoint]) return false
         }
+        return true
     }
 
-    private fun resetCadence() {
-        lastCandidateTimestamp = 0L
-        consecutiveCandidates = 0
-        previousIntervalMs = 0L
-        walkingConfirmed = false
+    private fun isValley(midpoint: Int): Boolean {
+        for (i in signalWindow.indices) {
+            if (i != midpoint && signalWindow[i] < signalWindow[midpoint]) return false
+        }
+        return true
     }
 
-    private companion object {
-        const val MIN_DYNAMIC_ACCELERATION = 1.30f
-        const val MIN_STEP_INTERVAL_MS = 280L
-        const val MAX_STEP_INTERVAL_MS = 1_800L
-        const val REQUIRED_RHYTHMIC_STEPS = 3
-        const val MIN_CADENCE_RATIO = 0.65
-        const val MAX_CADENCE_RATIO = 1.55
-        const val WALKING_TIMEOUT_NS = 2_500_000_000L
+    companion object {
+        private const val WINDOW_SIZE = 100
+        private const val AVERAGE_WINDOW = 10
+        private const val INTERVAL_COUNT = 2
+        private const val INTERVAL_VARIATION_MS = 250L
+        private const val PEAK_VALLEY_RANGE = 40f
     }
 }
