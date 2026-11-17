@@ -13,6 +13,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.projectbharat.chalateraho.data.StepRepository
@@ -24,6 +25,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.time.LocalDate
 
 class StepTrackingService : Service(), SensorEventListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -60,7 +64,10 @@ class StepTrackingService : Service(), SensorEventListener {
         if (event?.sensor?.type != Sensor.TYPE_STEP_COUNTER) return
         val boot = runCatching { Settings.Global.getInt(contentResolver, Settings.Global.BOOT_COUNT) }.getOrDefault(0)
         val total = event.values.firstOrNull()?.toLong() ?: return
-        scope.launch { repository.recordSensor(total, boot) }
+        val bootDate = Instant.ofEpochMilli(System.currentTimeMillis() - SystemClock.elapsedRealtime())
+            .atZone(ZoneId.systemDefault()).toLocalDate()
+        val bootStartedToday = bootDate == LocalDate.now()
+        scope.launch { repository.recordSensor(total, boot, bootStartedToday) }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
