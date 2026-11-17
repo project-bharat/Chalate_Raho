@@ -12,8 +12,7 @@ GitHub Actions builds the debug APK in the cloud. Open the **Actions** tab, sele
 - Kotlin
 - Jetpack Compose + Material 3
 - Android SensorManager step counter
-- Room database for daily history
-- DataStore for preferences
+- DataStore for daily step history and preferences
 - Foreground service for ongoing tracking
 
 ## Privacy
