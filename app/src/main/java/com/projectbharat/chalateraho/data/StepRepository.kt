@@ -14,7 +14,12 @@ private val Context.stepStore by preferencesDataStore(name = "walking_data")
 
 data class StepSnapshot(
     val steps: Int = 0, val goal: Int = 10000, val distanceKm: Double = 0.0,
-    val calories: Int = 0, val week: List<Int> = List(7) { 0 }
+    val calories: Int = 0,
+    val week: List<Int> = List(7) { 0 },
+    val month: List<Int> = List(30) { 0 },
+    val activeDays: Int = 0,
+    val averageSteps: Int = 0,
+    val bestDaySteps: Int = 0
 )
 
 class StepRepository(private val context: Context) {
@@ -29,8 +34,22 @@ class StepRepository(private val context: Context) {
         val week = (6 downTo 0).map { offset ->
             prefs[intPreferencesKey("steps_${today.minusDays(offset.toLong())}")] ?: 0
         }
+        val month = (29 downTo 0).map { offset ->
+            prefs[intPreferencesKey("steps_${today.minusDays(offset.toLong())}")] ?: 0
+        }
         val steps = prefs[intPreferencesKey("steps_$today")] ?: 0
-        StepSnapshot(steps, prefs[goalKey] ?: 10000, steps * 0.00075, (steps * 0.04).toInt(), week)
+        val completedDays = month.filter { it > 0 }
+        StepSnapshot(
+            steps = steps,
+            goal = prefs[goalKey] ?: 10000,
+            distanceKm = steps * 0.00075,
+            calories = (steps * 0.04).toInt(),
+            week = week,
+            month = month,
+            activeDays = completedDays.size,
+            averageSteps = if (completedDays.isEmpty()) 0 else completedDays.average().toInt(),
+            bestDaySteps = month.maxOrNull() ?: 0
+        )
     }
 
     suspend fun recordSensor(totalSinceBoot: Long, currentBoot: Int) {
