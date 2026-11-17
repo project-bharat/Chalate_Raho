@@ -4,38 +4,33 @@ A privacy-first Android walking and step-tracking application built with Kotlin 
 
 ## Step detection
 
-The pedometer uses the device accelerometer and maintains two independent counters:
+The tracker uses Android's dedicated hardware step sensors instead of building a step count from raw accelerometer peaks:
 
-- **Simple Steps:** Raw step-like events detected from the accelerometer signal.
-- **Walk Steps:** A cadence-filtered subset used for the daily goal, distance and activity statistics.
+1. **Primary: `Sensor.TYPE_STEP_DETECTOR`** — each sensor event represents one detected step. The app adds one to today's count immediately when the event is delivered. It requests zero report-batching latency.
+2. **Fallback: `Sensor.TYPE_STEP_COUNTER`** — used only when the step detector is unavailable. The app stores the last cumulative value and adds only the positive difference, handling service restarts and counter resets after reboot.
+3. **No raw accelerometer counter** — raw acceleration samples and diagnostic detections are not shown in the interface or added to the user's walking total.
 
-The detector follows the published MIT App Inventor Pedometer approach:
-- Squared acceleration magnitude
-- 10-sample moving average
-- 100-sample rolling signal window
-- Peak/valley detection with a minimum signal range
-- Two consecutive step intervals checked for regularity (250 ms tolerance)
-- Separate raw and filtered step totals
+Android documents expected step-detector latency below two seconds. The cumulative step-counter sensor can report with latency up to ten seconds, and Android describes it as higher accuracy over longer measurement periods. Both sensors require `ACTIVITY_RECOGNITION` on Android 10 and newer. Hardware availability and actual behavior vary by device.
 
-This is a motion-pattern heuristic. It does not prove geographic forward displacement: rhythmic movement while standing or walking in place can still be classified as walking. The two counters are shown separately so users can compare raw detections with filtered walking steps. Thresholds require testing on real devices.
+The UI displays the walking-step total only. The daily goal, distance estimate and calorie estimate use that same total.
 
 ## Build APK without installing Android Studio
 
-GitHub Actions builds the debug APK in the cloud. Open the **Actions** tab, select **Android CI**, and download the `app-debug` artifact after a successful run.
+GitHub Actions builds the debug APK in the cloud. Open the **Actions** tab, select **Android CI**, and download the `chalate-raho-debug-apk` artifact after a successful run.
 
 ## Technology
 
 - Kotlin
 - Jetpack Compose + Material 3
-- Android SensorManager accelerometer
+- Android `SensorManager` hardware step detector / step counter
 - DataStore for daily step history and preferences
 - Foreground service for ongoing tracking
 
 ## Privacy
 
-Step history and preferences remain on the device. The app does not require an account or upload activity data. GPS is not used for step detection.
+Step history and preferences remain on the device. The app does not need an account or internet connection to count steps. GPS is not used for step detection.
 
 ## Requirements
 
 - Android 10 (API 29) or newer
-- Device with an accelerometer
+- Device with Android step detector or step counter sensor
