@@ -72,7 +72,7 @@ private fun ChalateRahoApp() {
     var goalText by remember(snapshot.goal) { mutableStateOf(snapshot.goal.toString()) }
     val sensorAvailable = remember {
         val manager = context.getSystemService(SensorManager::class.java)
-        manager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
+        manager?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null && (manager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION) != null || manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null)
     }
 
     val permissions = remember {
@@ -190,7 +190,7 @@ private fun TodayScreen(data: StepSnapshot, sensorAvailable: Boolean, permission
             item {
                 Surface(color = Panel, shape = RoundedCornerShape(18.dp)) {
                     Text(
-                        if (!sensorAvailable) "This phone does not report a hardware step-counter sensor. Step tracking is unavailable on this device."
+                        if (!sensorAvailable) "This phone does not provide the motion sensors needed for validated step tracking. Step tracking is unavailable on this device."
                         else "Allow Activity Recognition permission to start step tracking.",
                         color = Muted, modifier = Modifier.padding(16.dp)
                     )
