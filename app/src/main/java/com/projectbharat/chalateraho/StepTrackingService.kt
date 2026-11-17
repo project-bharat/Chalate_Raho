@@ -48,7 +48,16 @@ class StepTrackingService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, notification("Starting accelerometer pedometer…"))
+        // A service startup failure must not take down the launcher activity.
+        try {
+            startForeground(NOTIFICATION_ID, notification("Starting accelerometer pedometer…"))
+        } catch (security: SecurityException) {
+            stopSelf()
+            return START_NOT_STICKY
+        } catch (state: IllegalStateException) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         val sensor = accelerometer
         if (sensor == null) {
@@ -59,9 +68,13 @@ class StepTrackingService : Service(), SensorEventListener {
         }
 
         sensorManager.unregisterListener(this)
-        val registered = sensorManager.registerListener(
-            this, sensor, SensorManager.SENSOR_DELAY_FASTEST
-        )
+        val registered = try {
+            sensorManager.registerListener(
+                this, sensor, SensorManager.SENSOR_DELAY_GAME
+            )
+        } catch (failure: RuntimeException) {
+            false
+        }
         if (!registered) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
                 .notify(NOTIFICATION_ID, notification("Unable to activate the accelerometer."))
@@ -93,7 +106,7 @@ class StepTrackingService : Service(), SensorEventListener {
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
     override fun onDestroy() {
-        sensorManager.unregisterListener(this)
+        if (::sensorManager.isInitialized) sensorManager.unregisterListener(this)
         snapshotJob?.cancel()
         scope.cancel()
         super.onDestroy()
