@@ -54,6 +54,19 @@ private val Mint = Color(0xFF9BE2B2)
 private val Muted = Color(0xFF9BAAA0)
 private val White = Color(0xFFF4F7F3)
 
+private fun startStepTrackingSafely(context: android.content.Context) {
+    try {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, StepTrackingService::class.java)
+        )
+    } catch (_: SecurityException) {
+        // Sensor/foreground-service permission may be unavailable on this device.
+    } catch (_: IllegalStateException) {
+        // Android may reject a foreground-service start while the app is backgrounded.
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,7 +104,7 @@ private fun ChalateRahoApp() {
         permissionGranted = permissions.filter { it == Manifest.permission.ACTIVITY_RECOGNITION }
             .all { result[it] == true || ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
         if (permissionGranted && sensorAvailable) {
-            ContextCompat.startForegroundService(context, Intent(context, StepTrackingService::class.java))
+            startStepTrackingSafely(context)
         }
     }
 
