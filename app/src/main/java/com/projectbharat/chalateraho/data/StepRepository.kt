@@ -31,13 +31,19 @@ class StepRepository(private val context: Context) {
 
     val snapshot: Flow<StepSnapshot> = context.stepStore.data.map { prefs ->
         val today = LocalDate.now()
+        fun stepsFor(date: LocalDate): Int {
+            val verified = prefs[intPreferencesKey("verified_steps_$date")]
+            if (verified != null) return verified
+            // Preserve older completed-day history, but never reuse today's old unfiltered total.
+            return if (date.isBefore(today)) prefs[intPreferencesKey("steps_$date")] ?: 0 else 0
+        }
         val week = (6 downTo 0).map { offset ->
-            prefs[intPreferencesKey("steps_${today.minusDays(offset.toLong())}")] ?: 0
+            stepsFor(today.minusDays(offset.toLong()))
         }
         val month = (29 downTo 0).map { offset ->
-            prefs[intPreferencesKey("steps_${today.minusDays(offset.toLong())}")] ?: 0
+            stepsFor(today.minusDays(offset.toLong()))
         }
-        val steps = prefs[intPreferencesKey("steps_$today")] ?: 0
+        val steps = stepsFor(today)
         val completedDays = month.filter { it > 0 }
         StepSnapshot(
             steps = steps,
@@ -59,7 +65,7 @@ class StepRepository(private val context: Context) {
     suspend fun addValidatedSteps(count: Int) {
         if (count <= 0) return
         context.stepStore.edit { prefs ->
-            val todayKey = intPreferencesKey("steps_${LocalDate.now()}")
+            val todayKey = intPreferencesKey("verified_steps_${LocalDate.now()}")
             val current = prefs[todayKey] ?: 0
             prefs[todayKey] = (current.toLong() + count)
                 .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
