@@ -231,7 +231,7 @@ private fun StepHero(data: StepSnapshot) {
                         topLeft = Offset(stroke, stroke), size = Size(size.width - stroke * 2, size.height - stroke * 2))
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("STEPS", color = Muted, fontSize = 11.sp, letterSpacing = 1.5.sp)
+                    Text("VERIFIED STEPS", color = Muted, fontSize = 11.sp, letterSpacing = 1.5.sp)
                     Text(NumberFormat.getIntegerInstance().format(data.steps), color = White, fontSize = 38.sp, fontWeight = FontWeight.Bold)
                     Text("${(progress * 100).toInt()}% of goal", color = Mint, fontSize = 13.sp)
                 }
