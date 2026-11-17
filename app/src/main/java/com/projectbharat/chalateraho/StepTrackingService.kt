@@ -128,10 +128,13 @@ class StepTrackingService : Service(), SensorEventListener {
                         // Normal case: add only the newly accumulated difference.
                         // If the value fell, Android's counter reset after reboot;
                         // the new post-reboot reading is itself today's new steps.
-                        val delta = if (lastCounterValue < 0L || current < lastCounterValue) {
-                            current
-                        } else {
-                            current - lastCounterValue
+                        val delta = when {
+                            // First-ever activation: establish a baseline instead of
+                            // importing steps accumulated before this app began tracking.
+                            lastCounterValue < 0L -> 0L
+                            // Counter reset: treat the new post-reboot value as today's steps.
+                            current < lastCounterValue -> current
+                            else -> current - lastCounterValue
                         }
 
                         // Persist the daily total before advancing the saved baseline.
