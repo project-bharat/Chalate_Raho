@@ -13,7 +13,7 @@ import java.time.LocalDate
 private val Context.stepStore by preferencesDataStore(name = "walking_data")
 
 data class StepSnapshot(
-    val steps: Int = 0, val simpleSteps: Int = 0, val goal: Int = 10000, val distanceKm: Double = 0.0,
+    val steps: Int = 0, val goal: Int = 10000, val distanceKm: Double = 0.0,
     val calories: Int = 0,
     val week: List<Int> = List(7) { 0 },
     val month: List<Int> = List(30) { 0 },
@@ -44,11 +44,9 @@ class StepRepository(private val context: Context) {
             stepsFor(today.minusDays(offset.toLong()))
         }
         val steps = stepsFor(today)
-        val simpleSteps = prefs[intPreferencesKey("simple_steps_$today")] ?: 0
         val completedDays = month.filter { it > 0 }
         StepSnapshot(
             steps = steps,
-            simpleSteps = simpleSteps,
             goal = prefs[goalKey] ?: 10000,
             distanceKm = steps * 0.00075,
             calories = (steps * 0.04).toInt(),
@@ -60,25 +58,14 @@ class StepRepository(private val context: Context) {
         )
     }
 
-    /**
-     * Adds only steps accepted by WalkingMotionFilter. The current date key
-     * naturally starts a fresh daily total at local midnight.
-     */
-    /**
-     * Records every accelerometer peak/valley as a simple step and only the
-     * cadence-filtered subset as walk steps.
-     */
-    suspend fun addDetectedStep(walkStepsToAdd: Int) {
+    /** Add hardware-confirmed steps to today's total. */
+    suspend fun addSteps(count: Int) {
+        if (count <= 0) return
         context.stepStore.edit { prefs ->
             val today = LocalDate.now()
-            val simpleKey = intPreferencesKey("simple_steps_$today")
-            val walkKey = intPreferencesKey("verified_steps_$today")
-            prefs[simpleKey] = ((prefs[simpleKey] ?: 0) + 1)
-                .coerceAtMost(Int.MAX_VALUE)
-            if (walkStepsToAdd > 0) {
-                prefs[walkKey] = (((prefs[walkKey] ?: 0).toLong()) + walkStepsToAdd.toLong())
-                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            }
+            val key = intPreferencesKey("verified_steps_$today")
+            prefs[key] = (((prefs[key] ?: 0).toLong()) + count.toLong())
+                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         }
     }
 
