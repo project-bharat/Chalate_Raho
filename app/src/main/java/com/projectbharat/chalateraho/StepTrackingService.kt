@@ -19,14 +19,18 @@ import com.projectbharat.chalateraho.data.StepRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import java.text.NumberFormat
 
 class StepTrackingService : Service(), SensorEventListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var sensorManager: SensorManager
     private lateinit var repository: StepRepository
     private var stepSensor: Sensor? = null
+    private var snapshotJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -39,7 +43,16 @@ class StepTrackingService : Service(), SensorEventListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, notification("Tracking your walk"))
         val sensor = stepSensor ?: run { stopSelf(); return START_NOT_STICKY }
+        sensorManager.unregisterListener(this)
         sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_NORMAL)
+        snapshotJob?.cancel()
+        snapshotJob = scope.launch {
+            repository.snapshot.collect { snapshot ->
+                val count = NumberFormat.getIntegerInstance().format(snapshot.steps)
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                    .notify(NOTIFICATION_ID, notification("$count steps today"))
+            }
+        }
         return START_STICKY
     }
 
@@ -53,6 +66,7 @@ class StepTrackingService : Service(), SensorEventListener {
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
+        snapshotJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }
