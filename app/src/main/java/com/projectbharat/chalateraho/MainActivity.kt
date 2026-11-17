@@ -14,6 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -291,11 +293,21 @@ private fun StatsScreen(data: StepSnapshot, modifier: Modifier = Modifier) {
     LazyColumn(modifier.fillMaxSize().padding(20.dp), contentPadding = PaddingValues(vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             Text("Your activity", color = White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
-            Text("A simple view of your walking consistency.", color = Muted)
+            Text("Your walking history at a glance.", color = Muted)
         }
         item { WeekCard(data.week) }
         item {
-            MetricCard("THIS WEEK", NumberFormat.getIntegerInstance().format(data.week.sum()), "Steps recorded in the last 7 days", Modifier.fillMaxWidth())
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MetricCard("7-DAY TOTAL", NumberFormat.getIntegerInstance().format(data.week.sum()), "Steps this week", Modifier.weight(1f))
+                MetricCard("ACTIVE DAYS", "${data.week.count { it > 0 }} / 7", "Days with recorded steps", Modifier.weight(1f))
+            }
+        }
+        item { MonthCard(data.month) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MetricCard("30-DAY AVERAGE", NumberFormat.getIntegerInstance().format(data.averageSteps), "Steps per active day", Modifier.weight(1f))
+                MetricCard("BEST DAY", NumberFormat.getIntegerInstance().format(data.bestDaySteps), "Highest daily count", Modifier.weight(1f))
+            }
         }
         item {
             Surface(color = Panel, shape = RoundedCornerShape(18.dp)) {
@@ -305,6 +317,40 @@ private fun StatsScreen(data: StepSnapshot, modifier: Modifier = Modifier) {
                     Text("Distance uses an approximate 0.75 m stride. Calories use a simple step-based estimate. Actual results vary by height, pace and body weight.", color = Muted, fontSize = 13.sp)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MonthCard(month: List<Int>) {
+    val max = (month.maxOrNull() ?: 0).coerceAtLeast(1)
+    Surface(color = Panel, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("LAST 30 DAYS", color = White, fontWeight = FontWeight.SemiBold)
+            Text("Daily step history", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(16.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).height(116.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                month.forEachIndexed { index, value ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
+                        Box(
+                            Modifier.width(7.dp)
+                                .height((5 + 72f * value / max).dp)
+                                .background(if (index == month.lastIndex) Mint else PanelSoft, RoundedCornerShape(4.dp))
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            LocalDate.now().minusDays((month.lastIndex - index).toLong()).dayOfMonth.toString(),
+                            color = Muted, fontSize = 9.sp
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("Days with steps: ${month.count { it > 0 }} of 30", color = Muted, fontSize = 11.sp)
         }
     }
 }
