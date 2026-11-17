@@ -21,6 +21,7 @@ class StepRepository(private val context: Context) {
     private val goalKey = intPreferencesKey("daily_goal")
     private val sensorKey = longPreferencesKey("sensor_baseline")
     private val bootKey = intPreferencesKey("boot_count")
+    private val baseStepsKey = intPreferencesKey("steps_at_sensor_baseline")
     private val dateKey = stringPreferencesKey("active_date")
 
     val snapshot: Flow<StepSnapshot> = context.stepStore.data.map { prefs ->
@@ -41,10 +42,13 @@ class StepRepository(private val context: Context) {
             val baseline = prefs[sensorKey]
             if (previousDate != today || previousBoot != currentBoot || baseline == null) {
                 prefs[sensorKey] = totalSinceBoot
+                prefs[baseStepsKey] = prefs[key] ?: 0
                 prefs[dateKey] = today
                 prefs[bootKey] = currentBoot
             } else {
-                prefs[key] = (totalSinceBoot - baseline).coerceAtLeast(0L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                val carriedSteps = prefs[baseStepsKey] ?: 0
+                val sensorDelta = (totalSinceBoot - baseline).coerceAtLeast(0L)
+                prefs[key] = (carriedSteps.toLong() + sensorDelta).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
         }
     }
