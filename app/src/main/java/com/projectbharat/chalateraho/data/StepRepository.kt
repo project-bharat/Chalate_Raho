@@ -13,7 +13,7 @@ import java.time.LocalDate
 private val Context.stepStore by preferencesDataStore(name = "walking_data")
 
 data class StepSnapshot(
-    val steps: Int = 0, val goal: Int = 10000, val distanceKm: Double = 0.0,
+    val steps: Int = 0, val simpleSteps: Int = 0, val goal: Int = 10000, val distanceKm: Double = 0.0,
     val calories: Int = 0,
     val week: List<Int> = List(7) { 0 },
     val month: List<Int> = List(30) { 0 },
@@ -44,9 +44,11 @@ class StepRepository(private val context: Context) {
             stepsFor(today.minusDays(offset.toLong()))
         }
         val steps = stepsFor(today)
+        val simpleSteps = prefs[intPreferencesKey("simple_steps_$today")] ?: 0
         val completedDays = month.filter { it > 0 }
         StepSnapshot(
             steps = steps,
+            simpleSteps = simpleSteps,
             goal = prefs[goalKey] ?: 10000,
             distanceKm = steps * 0.00075,
             calories = (steps * 0.04).toInt(),
@@ -62,13 +64,21 @@ class StepRepository(private val context: Context) {
      * Adds only steps accepted by WalkingMotionFilter. The current date key
      * naturally starts a fresh daily total at local midnight.
      */
-    suspend fun addValidatedSteps(count: Int) {
-        if (count <= 0) return
+    /**
+     * Records every accelerometer peak/valley as a simple step and only the
+     * cadence-filtered subset as walk steps.
+     */
+    suspend fun addDetectedStep(walkStepsToAdd: Int) {
         context.stepStore.edit { prefs ->
-            val todayKey = intPreferencesKey("verified_steps_${LocalDate.now()}")
-            val current = prefs[todayKey] ?: 0
-            prefs[todayKey] = (current.toLong() + count)
-                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            val today = LocalDate.now()
+            val simpleKey = intPreferencesKey("simple_steps_$today")
+            val walkKey = intPreferencesKey("verified_steps_$today")
+            prefs[simpleKey] = ((prefs[simpleKey] ?: 0) + 1)
+                .coerceAtMost(Int.MAX_VALUE)
+            if (walkStepsToAdd > 0) {
+                prefs[walkKey] = ((prefs[walkKey] ?: 0L) + walkStepsToAdd)
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            }
         }
     }
 
