@@ -76,7 +76,7 @@ class StepRepository(private val context: Context) {
             prefs[simpleKey] = ((prefs[simpleKey] ?: 0) + 1)
                 .coerceAtMost(Int.MAX_VALUE)
             if (walkStepsToAdd > 0) {
-                prefs[walkKey] = ((prefs[walkKey] ?: 0L) + walkStepsToAdd)
+                prefs[walkKey] = (((prefs[walkKey] ?: 0).toLong()) + walkStepsToAdd)
                     .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
         }
