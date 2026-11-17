@@ -52,7 +52,7 @@ class StepRepository(private val context: Context) {
         )
     }
 
-    suspend fun recordSensor(totalSinceBoot: Long, currentBoot: Int) {
+    suspend fun recordSensor(totalSinceBoot: Long, currentBoot: Int, bootStartedToday: Boolean) {
         context.stepStore.edit { prefs ->
             val today = LocalDate.now().toString()
             val previousDate = prefs[dateKey]
@@ -60,10 +60,15 @@ class StepRepository(private val context: Context) {
             val key = intPreferencesKey("steps_$today")
             val baseline = prefs[sensorKey]
             if (previousDate != today || previousBoot != currentBoot || baseline == null) {
-                prefs[sensorKey] = totalSinceBoot
+                val firstInstallToday = previousDate == null && baseline == null && bootStartedToday
+                val newBaseline = if (firstInstallToday) 0L else totalSinceBoot
+                prefs[sensorKey] = newBaseline
                 prefs[baseStepsKey] = prefs[key] ?: 0
                 prefs[dateKey] = today
                 prefs[bootKey] = currentBoot
+                if (firstInstallToday) {
+                    prefs[key] = totalSinceBoot.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                }
             } else {
                 val carriedSteps = prefs[baseStepsKey] ?: 0
                 val sensorDelta = (totalSinceBoot - baseline).coerceAtLeast(0L)
