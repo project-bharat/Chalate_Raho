@@ -85,7 +85,8 @@ private fun ChalateRahoApp() {
     var goalText by remember(snapshot.goal) { mutableStateOf(snapshot.goal.toString()) }
     val sensorAvailable = remember {
         val manager = context.getSystemService(SensorManager::class.java)
-        manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
+        manager?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null ||
+            manager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
     }
 
     val permissions = remember {
@@ -114,7 +115,7 @@ private fun ChalateRahoApp() {
             permissionLauncher.launch(permissions)
         } else {
             permissionGranted = true
-            if (sensorAvailable) ContextCompat.startForegroundService(context, Intent(context, StepTrackingService::class.java))
+            if (sensorAvailable) startStepTrackingSafely(context)
         }
     }
 
@@ -194,12 +195,6 @@ private fun TodayScreen(data: StepSnapshot, sensorAvailable: Boolean, permission
         item { StepHero(data) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MetricCard("SIMPLE STEPS", NumberFormat.getIntegerInstance().format(data.simpleSteps), "Raw step patterns", Modifier.weight(1f))
-                MetricCard("WALK STEPS", NumberFormat.getIntegerInstance().format(data.steps), "Cadence-filtered", Modifier.weight(1f))
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MetricCard("DISTANCE", String.format(Locale.getDefault(), "%.2f km", data.distanceKm), "Estimated", Modifier.weight(1f))
                 MetricCard("CALORIES", "${data.calories} kcal", "Estimated", Modifier.weight(1f))
             }
@@ -209,8 +204,8 @@ private fun TodayScreen(data: StepSnapshot, sensorAvailable: Boolean, permission
             item {
                 Surface(color = Panel, shape = RoundedCornerShape(18.dp)) {
                     Text(
-                        if (!sensorAvailable) "This phone does not provide the motion sensors needed for validated step tracking. Step tracking is unavailable on this device."
-                        else "Allow Activity Recognition permission to start step tracking.",
+                        if (!sensorAvailable) "This phone does not provide an Android hardware step detector or step counter. Step tracking is unavailable on this device."
+                        else "Allow Activity Recognition permission to enable hardware step tracking.",
                         color = Muted, modifier = Modifier.padding(16.dp)
                     )
                 }
