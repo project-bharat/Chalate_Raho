@@ -72,7 +72,7 @@ private fun ChalateRahoApp() {
     var goalText by remember(snapshot.goal) { mutableStateOf(snapshot.goal.toString()) }
     val sensorAvailable = remember {
         val manager = context.getSystemService(SensorManager::class.java)
-        manager?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null && (manager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION) != null || manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null)
+        manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null
     }
 
     val permissions = remember {
@@ -181,6 +181,12 @@ private fun TodayScreen(data: StepSnapshot, sensorAvailable: Boolean, permission
         item { StepHero(data) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                MetricCard("SIMPLE STEPS", NumberFormat.getIntegerInstance().format(data.simpleSteps), "Raw step patterns", Modifier.weight(1f))
+                MetricCard("WALK STEPS", NumberFormat.getIntegerInstance().format(data.steps), "Cadence-filtered", Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 MetricCard("DISTANCE", String.format(Locale.getDefault(), "%.2f km", data.distanceKm), "Estimated", Modifier.weight(1f))
                 MetricCard("CALORIES", "${data.calories} kcal", "Estimated", Modifier.weight(1f))
             }
@@ -231,7 +237,7 @@ private fun StepHero(data: StepSnapshot) {
                         topLeft = Offset(stroke, stroke), size = Size(size.width - stroke * 2, size.height - stroke * 2))
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("VERIFIED STEPS", color = Muted, fontSize = 11.sp, letterSpacing = 1.5.sp)
+                    Text("WALK STEPS", color = Muted, fontSize = 11.sp, letterSpacing = 1.5.sp)
                     Text(NumberFormat.getIntegerInstance().format(data.steps), color = White, fontSize = 38.sp, fontWeight = FontWeight.Bold)
                     Text("${(progress * 100).toInt()}% of goal", color = Mint, fontSize = 13.sp)
                 }
