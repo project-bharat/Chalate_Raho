@@ -24,17 +24,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.text.NumberFormat
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
- * Hardware-first pedometer.
+ * Counter-first pedometer.
  *
- * Prefer TYPE_STEP_DETECTOR for one event per step and low latency.
- * Fall back to TYPE_STEP_COUNTER when the detector is unavailable.
- * Raw accelerometer samples are deliberately not used as the user-facing count.
+ * TYPE_STEP_COUNTER is the source of truth for daily totals because it reports
+ * a cumulative hardware count and can catch up after delayed delivery. The
+ * detector is used only on devices without a step counter; it is never
+ * registered alongside the counter, avoiding double counting.
  */
 class StepTrackingService : Service(), SensorEventListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val counterMutex = Mutex()
     private lateinit var sensorManager: SensorManager
     private lateinit var repository: StepRepository
     private var activeSensor: Sensor? = null
@@ -55,7 +58,7 @@ class StepTrackingService : Service(), SensorEventListener {
         }
 
         try {
-            startForeground(NOTIFICATION_ID, notification("Starting step sensor…"))
+            startForeground(NOTIFICATION_ID, notification("Starting hardware step counter…"))
         } catch (error: SecurityException) {
             Log.e(TAG, "Cannot start foreground step service", error)
             stopSelf()
@@ -66,13 +69,15 @@ class StepTrackingService : Service(), SensorEventListener {
             return START_NOT_STICKY
         }
 
-        val detector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true)
-            ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
-        val counter = if (detector == null) {
-            sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER, true)
-                ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        // Counter first: cumulative readings are the canonical daily total.
+        // Detector is a compatibility fallback only when counter is absent.
+        val counter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER, true)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        val detector = if (counter == null) {
+            sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true)
+                ?: sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
         } else null
-        val selected = detector ?: counter
+        val selected = counter ?: detector
 
         if (selected == null) {
             updateNotification("No hardware step sensor is available on this phone.")
@@ -84,9 +89,8 @@ class StepTrackingService : Service(), SensorEventListener {
         activeSensor = selected
         lastCounterValue = -1L
 
-        // Special-trigger detector ignores samplingPeriodUs. Zero report latency
-        // avoids adding app-side batching on supported sensor implementations.
         val registered = try {
+            // Zero report latency requests no additional app-side batching.
             sensorManager.registerListener(this, selected, SensorManager.SENSOR_DELAY_NORMAL, 0)
         } catch (error: RuntimeException) {
             Log.e(TAG, "Step sensor registration failed", error)
@@ -98,34 +102,54 @@ class StepTrackingService : Service(), SensorEventListener {
             return START_NOT_STICKY
         }
 
-        updateNotification(if (selected.type == Sensor.TYPE_STEP_DETECTOR)
-            "Live hardware step detection active."
-        else "Hardware step counter active.")
+        updateNotification(
+            if (selected.type == Sensor.TYPE_STEP_COUNTER)
+                "Cumulative hardware step counter active."
+            else
+                "Step counter unavailable; detector fallback active."
+        )
         return START_STICKY
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
         event ?: return
         if (event.values.isEmpty()) return
+
         when (event.sensor.type) {
-            Sensor.TYPE_STEP_DETECTOR -> {
-                // Android defines each event as exactly one detected step.
-                scope.launch { repository.addSteps(1) }
-            }
             Sensor.TYPE_STEP_COUNTER -> {
                 val current = event.values[0].toLong().coerceAtLeast(0L)
-                if (lastCounterValue < 0L) {
-                    // Restore the previous sensor baseline across service restarts.
-                    val saved = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(KEY_LAST_COUNTER, -1L)
-                    lastCounterValue = if (saved >= 0L && current >= saved) saved else current
+                scope.launch {
+                    counterMutex.withLock {
+                        if (lastCounterValue < 0L) {
+                            lastCounterValue = getSharedPreferences(PREFS, MODE_PRIVATE)
+                                .getLong(KEY_LAST_COUNTER, -1L)
+                        }
+
+                        // Normal case: add only the newly accumulated difference.
+                        // If the value fell, Android's counter reset after reboot;
+                        // the new post-reboot reading is itself today's new steps.
+                        val delta = if (lastCounterValue < 0L || current < lastCounterValue) {
+                            current
+                        } else {
+                            current - lastCounterValue
+                        }
+
+                        // Persist the daily total before advancing the saved baseline.
+                        // This prevents a process death from silently losing a delta.
+                        if (delta > 0L) {
+                            repository.addSteps(delta.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+                        }
+                        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putLong(KEY_LAST_COUNTER, current)
+                            .apply()
+                        lastCounterValue = current
+                    }
                 }
-                if (current >= lastCounterValue) {
-                    val delta = current - lastCounterValue
-                    if (delta > 0L) scope.launch { repository.addSteps(delta.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()) }
-                }
-                // A lower value means the phone rebooted and its hardware counter reset.
-                lastCounterValue = current
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(KEY_LAST_COUNTER, current).apply()
+            }
+
+            Sensor.TYPE_STEP_DETECTOR -> {
+                // Only registered if the cumulative counter is unavailable.
+                scope.launch { repository.addSteps(1) }
             }
         }
     }
