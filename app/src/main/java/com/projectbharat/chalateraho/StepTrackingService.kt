@@ -13,7 +13,6 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
-import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.projectbharat.chalateraho.data.StepRepository
 import kotlinx.coroutines.CoroutineScope
@@ -26,60 +25,46 @@ import kotlinx.coroutines.launch
 import java.text.NumberFormat
 
 /**
- * Uses the hardware step detector for candidate footfalls, then independently
- * validates cadence and acceleration before persisting any steps.
+ * Continuous accelerometer-based pedometer with separate raw and cadence-filtered
+ * counts. Walk-step totals, not simple detections, feed the daily goal.
  */
 class StepTrackingService : Service(), SensorEventListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var sensorManager: SensorManager
     private lateinit var repository: StepRepository
-    private var stepDetector: Sensor? = null
-    private var motionSensor: Sensor? = null
-    private var motionSensorIsLinear = false
+    private var accelerometer: Sensor? = null
     private var snapshotJob: Job? = null
-    private lateinit var walkingFilter: WalkingMotionFilter
+    private lateinit var pedometer: WalkingMotionFilter
 
     override fun onCreate() {
         super.onCreate()
         repository = StepRepository(applicationContext)
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        stepDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
-        val linearAcceleration = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
-        motionSensor = linearAcceleration ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        motionSensorIsLinear = linearAcceleration != null
-        walkingFilter = WalkingMotionFilter { validatedCount ->
-            scope.launch { repository.addValidatedSteps(validatedCount) }
+        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        pedometer = WalkingMotionFilter { walkStepsToAdd ->
+            scope.launch { repository.addDetectedStep(walkStepsToAdd) }
         }
         createChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, notification("Checking walking movement…"))
+        startForeground(NOTIFICATION_ID, notification("Starting accelerometer pedometer…"))
 
-        val detector = stepDetector
-        val motion = motionSensor
-        if (detector == null || motion == null) {
-            val reason = if (detector == null) {
-                "This phone does not provide a step-detector sensor."
-            } else {
-                "This phone does not provide the motion sensor needed to validate steps."
-            }
+        val sensor = accelerometer
+        if (sensor == null) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, notification(reason))
+                .notify(NOTIFICATION_ID, notification("This phone has no accelerometer; step tracking is unavailable."))
             stopSelf()
             return START_NOT_STICKY
         }
 
         sensorManager.unregisterListener(this)
-        val detectorRegistered = sensorManager.registerListener(
-            this, detector, SensorManager.SENSOR_DELAY_NORMAL
+        val registered = sensorManager.registerListener(
+            this, sensor, SensorManager.SENSOR_DELAY_FASTEST
         )
-        val motionRegistered = sensorManager.registerListener(
-            this, motion, SensorManager.SENSOR_DELAY_GAME
-        )
-        if (!detectorRegistered || !motionRegistered) {
+        if (!registered) {
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .notify(NOTIFICATION_ID, notification("Unable to activate walking sensors."))
+                .notify(NOTIFICATION_ID, notification("Unable to activate the accelerometer."))
             stopSelf()
             return START_NOT_STICKY
         }
@@ -88,8 +73,9 @@ class StepTrackingService : Service(), SensorEventListener {
         snapshotJob = scope.launch {
             repository.snapshot.collect { snapshot ->
                 val count = NumberFormat.getIntegerInstance().format(snapshot.steps)
+                val raw = NumberFormat.getIntegerInstance().format(snapshot.simpleSteps)
                 (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                    .notify(NOTIFICATION_ID, notification("$count verified steps today"))
+                    .notify(NOTIFICATION_ID, notification("$count walk steps • $raw simple detections"))
             }
         }
         return START_STICKY
@@ -97,17 +83,10 @@ class StepTrackingService : Service(), SensorEventListener {
 
     override fun onSensorChanged(event: SensorEvent?) {
         event ?: return
-        when (event.sensor.type) {
-            Sensor.TYPE_LINEAR_ACCELERATION, Sensor.TYPE_ACCELEROMETER -> {
-                walkingFilter.onAcceleration(
-                    event.values[0], event.values[1], event.values[2],
-                    event.timestamp, motionSensorIsLinear
-                )
-                walkingFilter.resetIfStale(event.timestamp)
-            }
-            Sensor.TYPE_STEP_DETECTOR -> {
-                walkingFilter.onStepDetector(event.timestamp)
-            }
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER && event.values.size >= 3) {
+            pedometer.onAcceleration(
+                event.values[0], event.values[1], event.values[2], event.timestamp
+            )
         }
     }
 
@@ -127,7 +106,7 @@ class StepTrackingService : Service(), SensorEventListener {
             val channel = NotificationChannel(
                 CHANNEL_ID, "Step tracking", NotificationManager.IMPORTANCE_LOW
             )
-            channel.description = "Ongoing validated walking activity tracking"
+            channel.description = "Ongoing accelerometer-based step tracking"
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
